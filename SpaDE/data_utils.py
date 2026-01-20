@@ -1,92 +1,93 @@
 import os
 import torch
 import timm
-import fiftyone as fo
-import fiftyone.zoo as foz
+import glob
+import argparse
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
 from tqdm import tqdm
 
-class FiftyOneTorchDataset(Dataset):
-    def __init__(self, fo_dataset):
-        self.filepaths = fo_dataset.values("filepath")
+class ColoredImagesDataset(Dataset):
+    def __init__(self, data_dir, data_subdir, category=None):
+        if category and category.lower() != "all":
+            search_path = os.path.join(data_dir, category, data_subdir, "*.jpg")
+        else:
+            search_path = os.path.join(data_dir, "**", data_subdir, "*.jpg")
+
+        self.image_paths = glob.glob(search_path, recursive=True)
+        print(self.image_paths)
         self.transform = transforms.Compose([
-            transforms.Resize(256),
+            transforms.Resize(224),
             transforms.CenterCrop(224),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
+        print(f"Found {len(self.image_paths)} images matching {search_path}")
 
     def __len__(self):
-        return len(self.filepaths)
+        return len(self.image_paths)
 
     def __getitem__(self, idx):
-        filepath = self.filepaths[idx]
-        img = Image.open(filepath).convert('RGB')
-        return self.transform(img)
+        img_path = self.image_paths[idx]
+        img = Image.open(img_path).convert('RGB')
+        return self.transform(img), img_path
 
-def prepare_data(num_samples, save_path="lizard_activations.pt", batch_size=32):
-    """
-    Sprawdza, czy aktywacje istnieją. Jeśli nie, pobiera dataset, 
-    uruchamia ViT i zapisuje tensory.
-    """
-    
-    # 1. Sprawdzenie cache
-    if os.path.exists(save_path):
-        print(f"Loading activations from existing file: {save_path}")
-        return torch.load(save_path)
+def extract_and_save(model_name, data_dir, data_subdir, save_path, category, device, batch_size=32):
+    dataset = ColoredImagesDataset(data_dir, data_subdir, category=category)
+    if len(dataset) == 0:
+        raise ValueError(f"No images found in {data_dir} for category {category}")
 
-    print(f"Activations not found. Downloading dataset with {num_samples} samples...")
-    
-    # 2. FiftyOne Download
-    dataset_name = f"open-images-lizards-{num_samples}"
-    if dataset_name in fo.list_datasets():
-        dataset = fo.load_dataset(dataset_name)
-    else:
-        dataset = foz.load_zoo_dataset(
-            "open-images-v7",
-            split="validation",
-            label_types=["detections"],
-            classes=["Lizard"],
-            max_samples=num_samples,
-            shuffle=True,
-            dataset_name=dataset_name
-        )
-    
-    # 3. Model ViT & Hook
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("Loading ViT model...")
-    model = timm.create_model('vit_tiny_patch16_224', pretrained=True)
-    model.eval().to(device)
-    
-    # Hook na konkretną warstwę (zgodnie z oryginałem)
-    target_layer = model.blocks[-3].mlp.fc1
-    extracted_activations = []
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
-    def hook_fn(module, input, output):
-        extracted_activations.append(output.detach().cpu())
+    print(f"Loading model {model_name}...")
+    model = timm.create_model(model_name, pretrained=True, num_classes=0).to(device).eval()
+
+    target_layer = model.blocks[-3] # TODO: which layer?
+
+    activations, metadata = [], []
+
+    def hook_fn(m, i, o):
+        if len(o.shape) == 3: # [batch, tokens, hidden]
+            # TODO: all tokens or one?
+            # o = o.reshape(-1, o.shape[-1]) # include all tokens
+            o = o[:, 0, :] # include only the first token
+        else:
+            raise ValueError("Expected 3 dims.")
+        activations.append(o.detach().cpu())
 
     handle = target_layer.register_forward_hook(hook_fn)
-    
-    # 4. Ekstrakcja
-    torch_dataset = FiftyOneTorchDataset(dataset)
-    dataloader = DataLoader(torch_dataset, batch_size=batch_size, num_workers=2)
-    
+
     print("Extracting activations...")
     with torch.no_grad():
-        for batch in tqdm(dataloader):
-            batch = batch.to(device)
-            _ = model(batch)
-            
+        for imgs, paths in tqdm(loader, desc=f"Extracting {model_name}"):
+            model(imgs.to(device))
+            metadata.extend(paths)
     handle.remove()
-    
-    # 5. Przetwarzanie i zapis
-    # [Total_Images, 197, 768] -> [N * 197, 768]
-    all_acts = torch.cat(extracted_activations, dim=0)
-    flattened_acts = all_acts.reshape(-1, all_acts.shape[-1])
-    
-    print(f"Saving {flattened_acts.shape[0]} vectors to {save_path}")
-    torch.save(flattened_acts, save_path)
-    
-    return flattened_acts
+
+    result = {
+        "activations": torch.cat(activations, dim=0),
+        "metadata": metadata,
+        "model_name": model_name,
+        "category": category
+    }
+    torch.save(result, save_path)
+    print(f"Saved {result['activations'].shape[0]} vectors to {save_path}")
+    return result
+
+def prepare_data(data_dir, data_subdir, category, model_type, save_path):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    if model_type == "clip":
+        model_name = "vit_base_patch16_clip_224.openai"
+    elif model_type == "dino":
+        model_name = "vit_small_patch16_224.dino"
+    else:
+        model_name = model_type # Allow passing direct timm model name
+
+    if save_path is None:
+        cat_str = category if category else "all"
+        save_path = f"activations_{model_type}_{cat_str}.pt"
+
+    data = extract_and_save(model_name, data_dir, data_subdir, save_path, category=category, device=device)
+    return data["activations"]
