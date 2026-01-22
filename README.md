@@ -15,3 +15,10 @@ Benchmark + concepts:
 uv run python3 download_real_data.py
 bash run_real_benchmark.sh
 ```
+
+Hyperparameter sweep benchmark + concepts:
+
+```bash
+uv run python3 download_real_data.py
+uv run python3 run_sweep.py
+```
