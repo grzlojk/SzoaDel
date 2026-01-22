@@ -5,7 +5,7 @@ set -euo pipefail
 # Configuration
 MODELS=("clip") # ("clip" "dino")
 CATEGORIES=("car") # ("car" "hat" "mug" "shirt") # Include "all" to train on all.
-SAES=("TopK" "ReLU" "SpaDE" "SzpaDeLDiag" "SzpaDeLDiagLocal" "SzpaDeL") # No SzpaDeLLocal since it OOMs.
+SAES=("TopK" "ReLU" "SpaDE" "SzpaDeLDiag" "SzpaDeLDiagLocal" "SzpaDeL" "SzpaDeLRank1" "SzpaDeLMultiHead") # No SzpaDeLLocal since it OOMs.
 ITERATIONS=2000
 EXPANSION=4
 K=6 # param from color_img.py

@@ -18,8 +18,11 @@ from models import (
     SzpaDeLDiagLocal,
     SzpaDeL,
     SzpaDeLLocal,
+    SzpaDeLRank1,
+    SzpaDeLMultiHead,
 )
 from data_utils import prepare_data
+
 
 def get_args():
     parser = argparse.ArgumentParser(description="Train SAE on ViT activations")
@@ -27,8 +30,12 @@ def get_args():
     # Data
     parser.add_argument("--data_dir", type=str, default="white obejcts")
     parser.add_argument("--data_subdir", type=str, default="output_k3")
-    parser.add_argument("--category", type=str, default=None, help="Category subfolder (e.g. car, hat)")
-    parser.add_argument("--model_type", type=str, choices=["clip", "dino"], default="clip")
+    parser.add_argument(
+        "--category", type=str, default=None, help="Category subfolder (e.g. car, hat)"
+    )
+    parser.add_argument(
+        "--model_type", type=str, choices=["clip", "dino"], default="clip"
+    )
     parser.add_argument("--activations_subdir", type=str, default="data/activations")
     parser.add_argument("--val_split", type=float, default=0.1)
 
@@ -44,6 +51,8 @@ def get_args():
             "SzpaDeLDiagLocal",
             "SzpaDeL",
             "SzpaDeLLocal",
+            "SzpaDeLRank1",
+            "SzpaDeLMultiHead",
         ],
         required=True,
     )
@@ -52,12 +61,18 @@ def get_args():
 
     # Hiperparametry
     parser.add_argument("--k", type=int, default=32, help="k for TopK SAE")
-    parser.add_argument("--lambda_val", type=float, default=None,
-                        help="Initial Scale for SpaDE family (if None, uses paper default), L1 coeff for ReLU")
+    parser.add_argument(
+        "--lambda_val",
+        type=float,
+        default=None,
+        help="Initial Scale for SpaDE family (if None, uses paper default), L1 coeff for ReLU",
+    )
     parser.add_argument("--fix_lambda", action="store_true", help="Fix scale parameter")
 
     # Training
-    parser.add_argument("--iterations", type=int, default=100, help="Total training iterations")
+    parser.add_argument(
+        "--iterations", type=int, default=100, help="Total training iterations"
+    )
     parser.add_argument("--epochs", type=int, default=None, help="Explicit epochs")
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--lr", type=float, default=1e-2)
@@ -67,7 +82,9 @@ def get_args():
 
     # Output
     parser.add_argument("--metrics_subdir", type=str, default="results/metrics")
-    parser.add_argument("--save_model", action="store_true", help="Explicitly save the trained model")
+    parser.add_argument(
+        "--save_model", action="store_true", help="Explicitly save the trained model"
+    )
     parser.add_argument("--models_subdir", type=str, default="results/models")
 
     parser.add_argument("--device", type=str, default="cuda")
@@ -84,10 +101,12 @@ def get_args():
 
     return args
 
+
 def calculate_metrics(x, x_hat, z):
     mse = nn.functional.mse_loss(x_hat, x).item()
     l0 = (z > 0).float().sum(dim=-1).mean().item()
     return mse, l0
+
 
 def evaluate(model, dataloader, device, args):
     model.eval()
@@ -115,12 +134,14 @@ def evaluate(model, dataloader, device, args):
     return {
         "val/loss": val_loss_sum / num_batches,
         "val/MSE": val_mse_sum / num_batches,
-        "val/L0": val_l0_sum / num_batches
+        "val/L0": val_l0_sum / num_batches,
     }
+
 
 def main():
     args = get_args()
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    print(device)
 
     # Directories setup
     os.makedirs(args.activations_subdir, exist_ok=True)
@@ -129,7 +150,9 @@ def main():
         os.makedirs(args.models_subdir, exist_ok=True)
 
     cat_tag = args.category if args.category else "all"
-    data_path = os.path.join(args.activations_subdir, f"activations_{args.model_type}_{cat_tag}.pt")
+    data_path = os.path.join(
+        args.activations_subdir, f"activations_{args.model_type}_{cat_tag}.pt"
+    )
 
     if not args.no_log:
         run_name = f"{args.SAE}_{args.model_type}_{cat_tag}"
@@ -141,7 +164,7 @@ def main():
         data_subdir=args.data_subdir,
         category=args.category,
         model_type=args.model_type,
-        save_path=data_path
+        save_path=data_path,
     )
 
     activations = activations.to(torch.float32)
@@ -161,7 +184,9 @@ def main():
     batches_per_epoch = len(train_loader)
     if args.epochs is None:
         args.epochs = math.ceil(args.iterations / batches_per_epoch)
-        print(f"Set epochs to {args.epochs} to satisfy {args.iterations} iterations (batches/epoch: {batches_per_epoch})")
+        print(
+            f"Set epochs to {args.epochs} to satisfy {args.iterations} iterations (batches/epoch: {batches_per_epoch})"
+        )
 
     total_steps = args.epochs * batches_per_epoch
     print(f"Total training steps: {total_steps}")
@@ -171,22 +196,53 @@ def main():
     print(f"Initializing {args.SAE} | Latent: {latent_dim}")
 
     if args.SAE == "SpaDE":
-        model = SpaDE(args.input_dim, latent_dim, initial_scale=args.lambda_val, fix_scale=args.fix_lambda).to(device)
+        model = SpaDE(
+            args.input_dim,
+            latent_dim,
+            initial_scale=args.lambda_val,
+            fix_scale=args.fix_lambda,
+        ).to(device)
     elif args.SAE == "SzpaDeLDiag":
         model = SzpaDeLDiag(
-            args.input_dim, latent_dim, initial_scale=args.lambda_val, fix_scale=args.fix_lambda
+            args.input_dim,
+            latent_dim,
+            initial_scale=args.lambda_val,
+            fix_scale=args.fix_lambda,
         ).to(device)
     elif args.SAE == "SzpaDeLDiagLocal":
         model = SzpaDeLDiagLocal(
-            args.input_dim, latent_dim, initial_scale=args.lambda_val, fix_scale=args.fix_lambda
+            args.input_dim,
+            latent_dim,
+            initial_scale=args.lambda_val,
+            fix_scale=args.fix_lambda,
         ).to(device)
     elif args.SAE == "SzpaDeL":
         model = SzpaDeL(
-            args.input_dim, latent_dim, initial_scale=args.lambda_val, fix_scale=args.fix_lambda
+            args.input_dim,
+            latent_dim,
+            initial_scale=args.lambda_val,
+            fix_scale=args.fix_lambda,
         ).to(device)
     elif args.SAE == "SzpaDeLLocal":
         model = SzpaDeLLocal(
-            args.input_dim, latent_dim, initial_scale=args.lambda_val, fix_scale=args.fix_lambda
+            args.input_dim,
+            latent_dim,
+            initial_scale=args.lambda_val,
+            fix_scale=args.fix_lambda,
+        ).to(device)
+    elif args.SAE == "SzpaDeLRank1":
+        model = SzpaDeLRank1(
+            args.input_dim,
+            latent_dim,
+            initial_scale=args.lambda_val,
+            fix_scale=args.fix_lambda,
+        ).to(device)
+    elif args.SAE == "SzpaDeLMultiHead":
+        model = SzpaDeLMultiHead(
+            args.input_dim,
+            latent_dim,
+            initial_scale=args.lambda_val,
+            fix_scale=args.fix_lambda,
         ).to(device)
     elif args.SAE == "TopK":
         model = TopKSAE(args.input_dim, latent_dim, k=args.k).to(device)
@@ -194,7 +250,12 @@ def main():
         model = ReLUSAE(args.input_dim, latent_dim).to(device)
 
     # --- Optimizer & Scheduler ---
-    optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=args.weight_decay)
+    optimizer = optim.Adam(
+        model.parameters(),
+        lr=args.lr,
+        betas=(0.9, 0.999),
+        weight_decay=args.weight_decay,
+    )
 
     # Scheduler: Cosine Decay od LR do min_LR
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
@@ -207,7 +268,7 @@ def main():
 
     for epoch in range(args.epochs):
         model.train()
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.epochs}")
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{args.epochs}")
 
         for batch in pbar:
             x = batch[0].to(device)
@@ -236,17 +297,24 @@ def main():
                     "train/MSE": mse_val,
                     "train/L0": l0_val,
                     "train/lr": scheduler.get_last_lr()[0],
-                    "epoch": epoch
+                    "epoch": epoch,
                 }
                 if hasattr(model, "scale_param") and not args.fix_lambda:
-                    logs[f"train/scale"] = torch.nn.functional.softplus(model.scale_param).item()
+                    logs[f"train/scale"] = torch.nn.functional.softplus(
+                        model.scale_param
+                    ).item()
 
                 if not args.no_log:
                     wandb.log(logs)
                 history.append(logs)
 
             global_step += 1
-            pbar.set_postfix({"Loss": f"{loss.item():.4f}", "LR": f"{scheduler.get_last_lr()[0]:.1e}"})
+            pbar.set_postfix(
+                {
+                    "Loss": f"{loss.item():.4f}",
+                    "LR": f"{scheduler.get_last_lr()[0]:.1e}",
+                }
+            )
 
             if global_step >= args.iterations:
                 print("Reached target iterations.")
@@ -259,7 +327,9 @@ def main():
         if not args.no_log:
             wandb.log(val_metrics)
         history.append(val_metrics)
-        print(f"  Val MSE: {val_metrics['val/MSE']:.6f} | L0: {val_metrics['val/L0']:.2f}")
+        print(
+            f"  Val MSE: {val_metrics['val/MSE']:.6f} | L0: {val_metrics['val/L0']:.2f}"
+        )
 
         if global_step >= args.iterations:
             break
@@ -280,6 +350,7 @@ def main():
 
     if not args.no_log:
         wandb.finish()
+
 
 if __name__ == "__main__":
     main()

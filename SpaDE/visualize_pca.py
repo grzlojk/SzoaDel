@@ -8,7 +8,18 @@ import re
 import sys
 
 sys.path.append(os.path.dirname(__file__))
-from models import SpaDE, TopKSAE, ReLUSAE, SzpaDeLDiag, SzpaDeLDiagLocal, SzpaDeL, SzpaDeLLocal
+from models import (
+    SpaDE,
+    TopKSAE,
+    ReLUSAE,
+    SzpaDeLDiag,
+    SzpaDeLDiagLocal,
+    SzpaDeL,
+    SzpaDeLLocal,
+    SzpaDeLRank1,
+    SzpaDeLMultiHead,
+)
+
 
 def parse_color_from_path(path):
     """
@@ -17,12 +28,13 @@ def parse_color_from_path(path):
     """
     filename = os.path.basename(path)
     # Match pattern _R_G_B.jpg
-    match = re.search(r'_(\d+)_(\d+)_(\d+)\.jpg$', filename)
+    match = re.search(r"_(\d+)_(\d+)_(\d+)\.jpg$", filename)
     if match:
         r, g, b = map(int, match.groups())
         return [r / 255.0, g / 255.0, b / 255.0]
     else:
         raise ValueError("Invalid image name.")
+
 
 def load_sae_model(sae_type, model_path, input_dim, expansion_factor, k=32):
     latent_dim = input_dim * expansion_factor
@@ -34,6 +46,8 @@ def load_sae_model(sae_type, model_path, input_dim, expansion_factor, k=32):
         "SzpaDeLDiagLocal": SzpaDeLDiagLocal,
         "SzpaDeL": SzpaDeL,
         "SzpaDeLLocal": SzpaDeLLocal,
+        "SzpaDeLRank1": SzpaDeLRank1,
+        "SzpaDeLMultiHead": SzpaDeLMultiHead,
     }
 
     if sae_type not in models_map:
@@ -48,20 +62,45 @@ def load_sae_model(sae_type, model_path, input_dim, expansion_factor, k=32):
     model.eval()
     return model
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Visualize color distribution in latent space using PCA")
-    parser.add_argument("--data_path", type=str, required=True, help="Path to activations .pt file")
-    parser.add_argument("--model_path", type=str, default=None, help="Path to trained SAE .pth model (omit for Raw)")
+    parser = argparse.ArgumentParser(
+        description="Visualize color distribution in latent space using PCA"
+    )
+    parser.add_argument(
+        "--data_path", type=str, required=True, help="Path to activations .pt file"
+    )
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        default=None,
+        help="Path to trained SAE .pth model (omit for Raw)",
+    )
     parser.add_argument(
         "--sae_type",
         type=str,
-        choices=["Raw", "ReLU", "TopK", "SpaDE", "SzpaDeLDiag", "SzpaDeLDiagLocal", "SzpaDeL", "SzpaDeLLocal"],
+        choices=[
+            "Raw",
+            "ReLU",
+            "TopK",
+            "SpaDE",
+            "SzpaDeLDiag",
+            "SzpaDeLDiagLocal",
+            "SzpaDeL",
+            "SzpaDeLLocal",
+            "SzpaDeLRank1",
+            "SzpaDeLMultiHead",
+        ],
         default="Raw",
     )
     parser.add_argument("--expansion_factor", type=int, default=4)
     parser.add_argument("--k", type=int, default=32, help="k for TopK SAE")
-    parser.add_argument("--dims", type=int, default=3, choices=[2, 3], help="PCA dimensions")
-    parser.add_argument("--output_dir", type=str, default="plots", help="Directory to save plots")
+    parser.add_argument(
+        "--dims", type=int, default=3, choices=[2, 3], help="PCA dimensions"
+    )
+    parser.add_argument(
+        "--output_dir", type=str, default="plots", help="Directory to save plots"
+    )
 
     args = parser.parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
@@ -80,7 +119,13 @@ def main():
         feature_name1 = "Raw activations"
         model_tag = "Raw"
     else:
-        model = load_sae_model(args.sae_type, args.model_path, activations.shape[-1], args.expansion_factor, args.k)
+        model = load_sae_model(
+            args.sae_type,
+            args.model_path,
+            activations.shape[-1],
+            args.expansion_factor,
+            args.k,
+        )
         print(f"Computing latent activations (z) using {args.sae_type} SAE...")
         with torch.no_grad():
             _, latents = model(activations)
@@ -115,33 +160,43 @@ def main():
     # Create plot
     fig = plt.figure(figsize=(28, 11))
     if args.dims == 3:
-        ax1 = fig.add_subplot(1, 2, 1, projection='3d')
-        ax2 = fig.add_subplot(1, 2, 2, projection='3d')
+        ax1 = fig.add_subplot(1, 2, 1, projection="3d")
+        ax2 = fig.add_subplot(1, 2, 2, projection="3d")
     else:
         ax1 = fig.add_subplot(1, 2, 1)
         ax2 = fig.add_subplot(1, 2, 2)
     axes = [ax1, ax2]
-    for i, (pca_results, feature_name, ax) in enumerate([(pca_results1, feature_name1, axes[0]), (pca_results2, feature_name2, axes[1])]):
+    for i, (pca_results, feature_name, ax) in enumerate(
+        [(pca_results1, feature_name1, axes[0]), (pca_results2, feature_name2, axes[1])]
+    ):
         if args.dims == 3:
-            scatter = ax.scatter(pca_results[:, 0], pca_results[:, 1], pca_results[:, 2],
-                                 c=colors, alpha=0.5, s=5)
+            scatter = ax.scatter(
+                pca_results[:, 0],
+                pca_results[:, 1],
+                pca_results[:, 2],
+                c=colors,
+                alpha=0.5,
+                s=5,
+            )
             ax.set_zlabel("PCA 3")
             ax.view_init(elev=20, azim=45)
         else:
-            scatter = ax.scatter(pca_results[:, 0], pca_results[:, 1],
-                                 c=colors, alpha=0.5, s=5)
+            scatter = ax.scatter(
+                pca_results[:, 0], pca_results[:, 1], c=colors, alpha=0.5, s=5
+            )
 
         ax.set_xlabel("PCA 1")
         ax.set_ylabel("PCA 2")
         ax.set_title(f"PCA of {feature_name} ({cat_tag})")
-        ax.grid(True, linestyle='--', alpha=0.3)
+        ax.grid(True, linestyle="--", alpha=0.3)
 
     # Generate filename
     prefix = f"pca_{model_tag}_vs_raw_{cat_tag}_{args.dims}d".lower()
     save_path = os.path.join(args.output_dir, f"{prefix}.png")
 
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     print(f"Saved visualization to {save_path}")
+
 
 if __name__ == "__main__":
     main()

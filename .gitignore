@@ -1,3 +1,7 @@
+results*
+*logs*
+data/
+
 white obejcts/*/output_*
 plots
 *.pt
