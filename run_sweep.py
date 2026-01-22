@@ -12,11 +12,12 @@ CATEGORY = "mixed"
 MODEL_TYPE = "clip"
 # 1 epoch ~ 16 iterations
 # 300 * 16 = 4800
-ITERATIONS = (
-    4800  # 25000 # all models converge far below 250 epochs (most around 100-150)
-)
+# ITERATIONS = (
+#     4800  # 25000 # all models converge far below 250 epochs (most around 100-150)
+# )
+ITERATIONS = 12000
 EXPANSION = 4
-BATCH_SIZE = 1024
+BATCH_SIZE = 2048
 
 os.makedirs("experiment_logs", exist_ok=True)
 os.makedirs("results/metrics", exist_ok=True)

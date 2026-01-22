@@ -91,7 +91,7 @@ def main():
     model.to(device)
 
     print("Computing Latents...")
-    batch_size = 1024
+    batch_size = 2048
     all_latents = []
 
     with torch.no_grad():
