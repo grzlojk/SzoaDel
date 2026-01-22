@@ -10,7 +10,11 @@ CONCEPTS_SCRIPT = "SpaDE/find_concepts.py"
 DATA_DIR = "data/real_data"
 CATEGORY = "mixed"
 MODEL_TYPE = "clip"
-ITERATIONS = 30
+# 1 epoch ~ 16 iterations
+# 300 * 16 = 4800
+ITERATIONS = (
+    4800  # 25000 # all models converge far below 250 epochs (most around 100-150)
+)
 EXPANSION = 4
 BATCH_SIZE = 1024
 
