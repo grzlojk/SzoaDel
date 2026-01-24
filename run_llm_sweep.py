@@ -160,7 +160,6 @@ for i, exp in enumerate(experiments):
     if os.path.exists(src_pth):
         shutil.move(src_pth, dst_pth)
 
-    # Run Visualization
     vis_cmd = [
         "uv",
         "run",
