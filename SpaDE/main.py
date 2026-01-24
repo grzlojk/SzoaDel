@@ -34,7 +34,7 @@ def get_args():
         "--category", type=str, default=None, help="Category subfolder (e.g. car, hat)"
     )
     parser.add_argument(
-        "--model_type", type=str, choices=["clip", "dino"], default="clip"
+        "--model_type", type=str, choices=["clip", "dino", "qwen"], default="clip"
     )
     parser.add_argument("--activations_subdir", type=str, default="data/activations")
     parser.add_argument("--val_split", type=float, default=0.1)

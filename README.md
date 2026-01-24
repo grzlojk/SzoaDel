@@ -22,3 +22,10 @@ Hyperparameter sweep benchmark + concepts:
 uv run python3 download_real_data.py
 uv run python3 run_sweep.py
 ```
+
+LLM Hyperparameter sweep:
+
+```bash
+uv run python3 extract_llm_data.py
+uv run python3 run_llm_sweep.py
+```

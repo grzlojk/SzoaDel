@@ -89,12 +89,25 @@ def extract_and_save(
 def prepare_data(data_dir, data_subdir, category, model_type, save_path):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    if model_type == "clip":
-        model_name = "vit_base_patch16_clip_224.openai"
-    elif model_type == "dino":
-        model_name = "vit_small_patch16_224.dino"
-    else:
-        model_name = model_type  # Allow passing direct timm model name
+    # if model_type == "clip":
+    #     model_name = "vit_base_patch16_clip_224.openai"
+    # elif model_type == "dino":
+    #     model_name = "vit_small_patch16_224.dino"
+    # else:
+    #     model_name = model_type  # Allow passing direct timm model name
+
+    if model_type == "qwen":
+        # We expect the file to be extracted already by extract_llm_data.py
+        # Hardcoded path or passed via save_path
+        llm_path = "data/activations/activations_qwen_fineweb.pt"
+        if os.path.exists(llm_path):
+            print(f"Loading LLM activations from {llm_path}")
+            data = torch.load(llm_path, map_location="cpu")
+            return data["activations"]
+        else:
+            raise FileNotFoundError(
+                f"Please run extract_llm_data.py first to generate {llm_path}"
+            )
 
     if save_path is None:
         cat_str = category if category else "all"

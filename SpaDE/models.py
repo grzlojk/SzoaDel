@@ -272,3 +272,55 @@ class SzpaDeLMultiHead(SpaDE):
         # Weighted sum across heads
         # ([B, H, L] * [1, H, L]).sum(dim=1) -> [B, L]
         return (dists_per_head * weights).sum(dim=1)
+
+
+class HybridSAE(nn.Module):
+    def __init__(self, input_dim, latent_dim, k=32):
+        super().__init__()
+        self.k = k
+
+        # --- 1. The Geometry Parameters (From SzpaDeLRank1) ---
+        # Center of the "Curved" feature
+        self.encoder_prototypes = nn.Parameter(
+            torch.randn(latent_dim, input_dim) * 0.02
+        )
+        # The rotation/stretch vector
+        self.metric_vectors = nn.Parameter(torch.randn(latent_dim, input_dim) * 0.01)
+
+        # --- 2. The Decoder (Standard Linear) ---
+        self.decoder = nn.Linear(latent_dim, input_dim, bias=True)
+
+    def get_dist(self, x):
+        # EXACT COPY of SzpaDeLRank1.get_dist
+        x_norm = (x**2).sum(dim=1, keepdim=True)
+        m_norm = (self.encoder_prototypes**2).sum(dim=1).view(1, -1)
+        cross_euclidean = x @ self.encoder_prototypes.t()
+        euclidean_dist = x_norm + m_norm - 2.0 * cross_euclidean
+
+        xu = x @ self.metric_vectors.t()
+        mu = (self.encoder_prototypes * self.metric_vectors).sum(dim=1).view(1, -1)
+        rank1_correction = (xu - mu) ** 2
+
+        return euclidean_dist + rank1_correction
+
+    def forward(self, x):
+        # 1. Calculate Manifold Distance
+        dists = self.get_dist(x)  # [Batch, Latent]
+
+        # 2. Convert Distance to "Score"
+        # We want the K smallest distances.
+        # TopK finds largest values, so we negate the distance.
+        scores = -dists
+
+        # 3. Hard Sparsity Constraint (The Hybrid Part)
+        topk_values, topk_indices = torch.topk(scores, k=self.k, dim=-1)
+
+        # 4. Construct Latent z
+        z = torch.zeros_like(scores)
+        z.scatter_(-1, topk_indices, topk_values)
+
+        # 5. Decode
+        # The decoder will learn to interpret these negative scores
+        # (effectively learning a bias to shift them back to positive magnitude)
+        x_hat = self.decoder(z)
+        return x_hat, z
