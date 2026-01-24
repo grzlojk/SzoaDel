@@ -92,6 +92,7 @@ spade_models = [
     "SzpaDeL",
     "SzpaDeLRank1",
     "SzpaDeLMultiHead",
+    "HybridSAE",
 ]
 
 for sae in spade_models:

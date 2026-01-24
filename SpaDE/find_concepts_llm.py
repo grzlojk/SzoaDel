@@ -4,6 +4,8 @@ import argparse
 from transformers import AutoTokenizer
 import sys
 import html
+from tqdm import tqdm
+import heapq
 
 # Import models
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -41,6 +43,8 @@ def load_sae_model(sae_type, model_path, input_dim, expansion_factor, k=32):
         model = ReLUSAE(input_dim, latent_dim)
     elif sae_type == "SzpaDeLMultiHead":
         model = SzpaDeLMultiHead(input_dim, latent_dim)
+    elif sae_type == "HybridSAE":
+        model = HybridSAE(input_dim, latent_dim)
     else:
         raise ValueError(f"Unknown SAE: {sae_type}")
 
@@ -63,7 +67,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # print("Loading data...")
+    print("Loading data...")
     data = torch.load(args.data_path, map_location="cpu")
     activations = data["activations"]
     token_ids = data["token_ids"]
@@ -71,33 +75,74 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B-Base")
 
     input_dim = activations.shape[-1]
+    latent_dim = input_dim * args.expansion_factor
+    num_samples = activations.shape[0]
 
     model = load_sae_model(
         args.sae_type, args.model_path, input_dim, args.expansion_factor, args.k
     )
     model.to(device)
 
-    # print("Computing Latents...")
+    # --- Pass 1: Compute aggregate statistics in a memory-efficient way ---
+    print("Analyzing features (Pass 1/2): Calculating aggregate statistics...")
+    max_acts = torch.full((latent_dim,), -torch.inf, device="cpu")
+    feature_non_zero_counts = torch.zeros(latent_dim, dtype=torch.int64, device="cpu")
+
     batch_size = 512
-    all_latents = []
     with torch.no_grad():
-        for i in range(0, len(activations), batch_size):
+        for i in tqdm(range(0, num_samples, batch_size), desc="Pass 1"):
             batch = activations[i : i + batch_size].to(device)
-            # This logic can be simplified if all models have the same output signature
             _, latents = model(batch)
-            all_latents.append(latents.cpu())
 
-    all_latents = torch.cat(all_latents, dim=0)
+            # Update max activations
+            batch_max_acts = latents.max(dim=0).values.cpu()
+            max_acts = torch.max(max_acts, batch_max_acts)
 
-    # --- Pre-compute statistics ---
-    # print("Analyzing features...")
-    max_acts, _ = all_latents.max(dim=0)
+            # Update non-zero counts
+            feature_non_zero_counts += (latents > 1e-6).sum(dim=0).cpu()
+
+    feature_sparsity = feature_non_zero_counts.float() / num_samples
     sorted_vals, sorted_indices = torch.sort(max_acts, descending=True)
 
-    # Calculate feature sparsity (L0 norm)
-    feature_sparsity = (all_latents > 1e-6).float().mean(dim=0)
+    # --- Pass 2: Find top activating examples for the top features ---
+    print("Analyzing features (Pass 2/2): Finding top examples...")
+    num_features_to_report = 20
+    num_examples_per_feature = 10
+
+    features_to_analyze = sorted_indices[:num_features_to_report]
+
+    # Use a dictionary of min-heaps to track top-k examples for each feature
+    top_examples = {feat_idx.item(): [] for feat_idx in features_to_analyze}
+
+    with torch.no_grad():
+        for i in tqdm(range(0, num_samples, batch_size), desc="Pass 2"):
+            batch = activations[i : i + batch_size].to(device)
+            _, latents = model(batch)
+
+            for feat_idx in features_to_analyze:
+                feat_idx_item = feat_idx.item()
+                activations_for_feature = latents[:, feat_idx]
+
+                for local_idx, act_val in enumerate(activations_for_feature):
+                    act_val_item = act_val.item()
+                    global_idx = i + local_idx
+
+                    # Add to heap if it's not full, or if the current item is larger than the smallest in the heap
+                    if len(top_examples[feat_idx_item]) < num_examples_per_feature:
+                        heapq.heappush(
+                            top_examples[feat_idx_item], (act_val_item, global_idx)
+                        )
+                    elif act_val_item > top_examples[feat_idx_item][0][0]:
+                        heapq.heapreplace(
+                            top_examples[feat_idx_item], (act_val_item, global_idx)
+                        )
+
+    # Sort the results for display
+    for feat_idx in top_examples:
+        top_examples[feat_idx].sort(key=lambda x: x[0], reverse=True)
 
     # --- HTML Report Generation ---
+    print("Generating HTML report...")
     html_output = f"""
     <html>
     <head>
@@ -118,67 +163,53 @@ def main():
             <h1>Visualizing Top Concepts for: {args.sae_type}</h1>
     """
 
-    for i in range(20):  # Show top 20 features
-        feat_idx = sorted_indices[i].item()
-
-        # Skip features that never activate
-        if max_acts[feat_idx] == 0:
+    for feat_idx in features_to_analyze:
+        feat_idx = feat_idx.item()
+        if max_acts[feat_idx] <= 1e-6:
             continue
 
-        feat_acts = all_latents[:, feat_idx]
-        top_vals, top_inds = torch.topk(feat_acts, k=10)
-
         sparsity = feature_sparsity[feat_idx].item()
+        max_act_for_feature = max_acts[feat_idx].item()
 
-        header = f"Feature {feat_idx}"
-        html_output += f'<div class="feature"><h2>{header}</h2>'
-        html_output += f'<div class="metadata"><strong>Max Activation:</strong> {top_vals[0]:.4f} | <strong>Sparsity (L0):</strong> {sparsity:.4%}</div>'
+        html_output += f'<div class="feature"><h2>Feature {feat_idx}</h2>'
+        html_output += f'<div class="metadata"><strong>Max Activation:</strong> {max_act_for_feature:.4f} | <strong>Sparsity (L0):</strong> {1 - sparsity:.4%}</div>'
+        html_output += "<h3>Top Activating Examples</h3>"
 
         # --- Display Top Activating Examples ---
-        html_output += "<h3>Top Activating Examples</h3>"
-        for j, idx in enumerate(top_inds):
-            idx = idx.item()
-            val = top_vals[j].item()
+        with torch.no_grad():
+            for val, idx in top_examples[feat_idx]:
+                start = max(0, idx - 10)
+                end = min(len(token_ids), idx + 10)
+                rel_idx = idx - start
 
-            # Use the max activation for this specific feature as the ceiling for color scaling
-            max_act_for_feature = top_vals[0].item()
+                # Re-compute latents for just this small context window
+                context_activations_input = activations[start:end].to(device)
+                _, context_latents = model(context_activations_input)
+                context_activations = context_latents[:, feat_idx].cpu()
 
-            start = max(0, idx - 10)
-            end = min(len(token_ids), idx + 10)
+                context_tokens = token_ids[start:end]
+                decoded_parts = []
+                for t_i, (t, act_val_tensor) in enumerate(
+                    zip(context_tokens, context_activations)
+                ):
+                    act_val = act_val_tensor.item()
+                    word = tokenizer.decode([t])
+                    word_html = html.escape(word)
 
-            context_tokens = token_ids[start:end]
-            context_activations = all_latents[start:end, feat_idx]
-            rel_idx = idx - start
+                    style_str = ""
+                    if t_i == rel_idx:
+                        style_str = 'class="peak-highlight"'
+                    elif act_val > 0.01:
+                        intensity = min(act_val / max_act_for_feature, 1.0)
+                        style_str = f'style="background-color: rgba(0, 123, 255, {intensity:.2f}); color: {"white" if intensity > 0.5 else "black"}; padding: 2px 4px; border-radius: 3px;"'
 
-            decoded_parts = []
-            for t_i, (t, act_val_tensor) in enumerate(
-                zip(context_tokens, context_activations)
-            ):
-                act_val = act_val_tensor.item()
-                word = tokenizer.decode([t])
-                word_html = html.escape(word)  # Sanitize for HTML
+                    decoded_parts.append(f"<span {style_str}>{word_html}</span>")
 
-                style_str = ""
-                # Main highlight for the single most activating token in this example
-                if t_i == rel_idx:
-                    style_str = 'class="peak-highlight"'
-                # Secondary heatmap for any activating token
-                elif act_val > 0.01:  # Threshold to avoid coloring everything
-                    # Scale intensity from 0 to 1 based on this feature's max activation
-                    intensity = min(act_val / max_act_for_feature, 1.0)
-                    # Use a blue color (rgba for transparency)
-                    style_str = f'style="background-color: rgba(0, 123, 255, {intensity:.2f}); color: {"white" if intensity > 0.5 else "black"}; padding: 2px 4px; border-radius: 3px;"'
-
-                decoded_parts.append(f"<span {style_str}>{word_html}</span>")
-
-            html_output += (
-                f'<div class="context">{"".join(decoded_parts)} (act: {val:.2f})</div>'
-            )
+                html_output += f'<div class="context">{"".join(decoded_parts)} (act: {val:.2f})</div>'
         html_output += "</div>"
 
     html_output += "</div></body></html>"
 
-    # Save HTML report
     output_path = os.path.join(args.output_dir, f"{args.sae_type}_concepts.html")
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_output)

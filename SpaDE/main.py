@@ -20,6 +20,7 @@ from models import (
     SzpaDeLLocal,
     SzpaDeLRank1,
     SzpaDeLMultiHead,
+    HybridSAE,
 )
 from data_utils import prepare_data
 
@@ -53,6 +54,7 @@ def get_args():
             "SzpaDeLLocal",
             "SzpaDeLRank1",
             "SzpaDeLMultiHead",
+            "HybridSAE",
         ],
         required=True,
     )
@@ -243,6 +245,11 @@ def main():
             latent_dim,
             initial_scale=args.lambda_val,
             fix_scale=args.fix_lambda,
+        ).to(device)
+    elif args.SAE == "HybridSAE":
+        model = HybridSAE(
+            args.input_dim,
+            latent_dim,
         ).to(device)
     elif args.SAE == "TopK":
         model = TopKSAE(args.input_dim, latent_dim, k=args.k).to(device)

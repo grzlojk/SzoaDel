@@ -17,7 +17,7 @@ else:
 MODEL_ID = "Qwen/Qwen3-0.6B-Base"
 DATASET_ID = "HuggingFaceFW/fineweb-edu"
 LAYER_IDX = 14  # (28 total)
-NUM_TOKENS_WANTED = 200_000
+NUM_TOKENS_WANTED = 50_000  # 200_000
 BATCH_SIZE = 1  # batch has to be 1, because qwen is tweaking
 SEQ_LEN = 256
 SAVE_PATH = "data/activations/activations_qwen_fineweb.pt"

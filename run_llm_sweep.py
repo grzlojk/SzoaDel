@@ -10,7 +10,7 @@ SCRIPT_PATH = "SpaDE/main.py"
 CONCEPTS_SCRIPT = "SpaDE/find_concepts_llm.py"
 MODEL_TYPE = "qwen"
 CATEGORY = "fineweb"
-ITERATIONS = 100  # 4800
+ITERATIONS = 4800
 EXPANSION = 4
 BATCH_SIZE = 512
 
@@ -33,7 +33,7 @@ for k in [16, 32, 64, 128]:
         {
             "SAE": "TopK",
             "k": k,
-            "lr": 1e-3,
+            "lr": 1e-4,
             "lambda_val": 0,
             "fix": False,
             "tag": f"k{k}",
@@ -46,7 +46,7 @@ for lam in [1e-4, 1e-3]:
         {
             "SAE": "ReLU",
             "k": 32,
-            "lr": 1e-3,
+            "lr": 1e-4,
             "lambda_val": lam,
             "fix": False,
             "tag": f"lam{lam}",
@@ -62,6 +62,7 @@ spade_models = [
     "SzpaDeL",
     "SzpaDeLRank1",
     "SzpaDeLMultiHead",
+    "HybridSAE",
 ]
 
 for sae in spade_models:
@@ -70,7 +71,7 @@ for sae in spade_models:
             {
                 "SAE": sae,
                 "k": 32,
-                "lr": 5e-4,
+                "lr": 1e-4,
                 "lambda_val": lam,
                 "fix": True,
                 "tag": f"lam{lam}",
@@ -81,7 +82,7 @@ for sae in spade_models:
         {
             "SAE": sae,
             "k": 32,
-            "lr": 5e-4,
+            "lr": 1e-4,
             "lambda_val": 0,  # 0 -> Triggers "None" in main.py (Default Paper Init)
             "fix": False,  # False -> Learnable Parameter (Original Paper behavior)
             "tag": "lamSpaDE",
@@ -141,8 +142,15 @@ for i, exp in enumerate(experiments):
 
     # Run Training
     log_file = f"experiment_logs/llm_{sae}_{tag}.log"
-    with open(log_file, "w") as f:
-        subprocess.run(cmd, stdout=f, stderr=f)
+    try:
+        with open(log_file, "w") as f:
+            subprocess.run(cmd, stdout=f, stderr=f, check=True)  # Add check=True
+    except subprocess.CalledProcessError as e:
+        print(
+            f"[{i + 1}/{total}] ERROR during training for {sae} | {tag}. See {log_file} for details."
+        )
+        print(e)
+        continue
 
     # Rename CSV
     src_csv = os.path.join("results/metrics", default_csv)
@@ -160,25 +168,32 @@ for i, exp in enumerate(experiments):
     if os.path.exists(src_pth):
         shutil.move(src_pth, dst_pth)
 
-    vis_cmd = [
-        "uv",
-        "run",
-        PYTHON_EXEC,
-        CONCEPTS_SCRIPT,
-        "--data_path",
-        ACTIVATIONS_PATH,
-        "--model_path",
-        dst_pth,
-        "--sae_type",
-        sae,
-        "--expansion_factor",
-        str(EXPANSION),
-        "--k",
-        str(k),
-        "--output_dir",
-        f"results/concepts_llm/{sae}_{tag}",
-    ]
-    subprocess.run(vis_cmd)
+    if os.path.exists(dst_pth):
+        vis_cmd = [
+            "uv",
+            "run",
+            PYTHON_EXEC,
+            CONCEPTS_SCRIPT,
+            "--data_path",
+            ACTIVATIONS_PATH,
+            "--model_path",
+            dst_pth,
+            "--sae_type",
+            sae,
+            "--expansion_factor",
+            str(EXPANSION),
+            "--k",
+            str(k),
+            "--output_dir",
+            f"results/concepts_llm/{sae}_{tag}",
+        ]
+        vis_log_file = f"experiment_logs/llm_{sae}_{tag}_concepts.log"
+        with open(vis_log_file, "w") as vf:
+            subprocess.run(vis_cmd, stdout=vf, stderr=vf)
+    else:
+        print(
+            f"[{i + 1}/{total}] SKIPPING CONCEPTS SCRIPT for {sae} | {tag} due to missing model file."
+        )
 
 
 subprocess.run(
