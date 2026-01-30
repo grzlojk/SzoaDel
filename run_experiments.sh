@@ -10,6 +10,9 @@ ITERATIONS=2000
 EXPANSION=4
 K=6 # param from color_img.py
 
+# Distance-correlation settings
+MANTEL_PERMUTATIONS=0 # set >0 (e.g., 1000) to run Mantel test
+
 # Create a logs directory if it doesn't exist
 mkdir -p experiment_logs
 
@@ -44,6 +47,17 @@ for model in "${MODELS[@]}"; do
                 --model_path "results/models/${sae}_${model}_${cat}.pth" \
                 --sae_type "$sae" \
                 --dims 3
+
+            uv run python3 SpaDE/latent_color_distance_correlation.py \
+                --data_path "data/activations/activations_${model}_${cat}.pt" \
+                --model_path "results/models/${sae}_${model}_${cat}.pth" \
+                --sae_type "$sae" \
+                --expansion_factor "$EXPANSION" \
+                --latent_distance euclidean \
+                --color_distance lch_euclidean \
+                --mantel_permutations "$MANTEL_PERMUTATIONS" \
+                --per_color_correlations \
+                > "experiment_logs/${sae}_${model}_${cat}_latent_hcl_corr.log" 2>&1
         done
     done
 done
